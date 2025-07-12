@@ -1,0 +1,232 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production builds
+build/
+dist/
+
+# Environment variables and sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Large data files and geospatial data
+# Flood zone data (very large files)
+public/FLOOD/*.geojson
+public/FLOOD/*.tif
+public/FLOOD/*.shp
+public/FLOOD/*.shx
+public/FLOOD/*.dbf
+public/FLOOD/*.prj
+public/FLOOD/*.cpg
+public/FLOOD/*.tfw
+public/FLOOD/*.ovr
+public/FLOOD/*.xml
+public/FLOOD/*.lyrx
+public/FLOOD/*.png
+public/FLOOD/*.json
+public/FLOOD/flood_colors.txt
+
+# FLOOD2 data
+public/FLOOD2/*.geojson
+public/FLOOD2/*.tif
+public/FLOOD2/*.shp
+public/FLOOD2/*.shx
+public/FLOOD2/*.dbf
+public/FLOOD2/*.prj
+public/FLOOD2/*.cpg
+public/FLOOD2/*.py
+
+# Census data
+public/CEN/*.shp
+public/CEN/*.shx
+public/CEN/*.dbf
+public/CEN/*.prj
+public/CEN/*.cpg
+public/CEN/*.xml
+
+# Large property and insurance data files
+public/florida_properties_real_data_*.geojson
+public/florida_zipcodes_with_insurance_data_*.geojson
+public/wind_only_time_series_complete_*.json
+public/wind_only_hypothesis_dataset_*.json
+
+# Generated map files
+public/lee_county_blockgroup_boundaries.geojson
+public/lee_county_blockgroups_population_65.geojson
+public/lee_county_blockgroups_with_vulnerability.geojson
+public/lee_county_population_65_map.png
+public/lee_county_vulnerability_map.png
+public/population_65_legend.png
+public/vulnerability_legend.png
+
+# Python scripts and generated files
+*.py
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# API keys and sensitive configuration
+rconfig.txt
+test_fema_api.js
+
+# Large package files
+package-lock.json
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Large image files
+*.tiff
+*.tif
+*.bmp
+*.raw
+
+# Vector graphics (if large)
+*.svg
+*.ai
+*.eps
+
+# Audio/Video files
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.wav
+
+# Document files
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
+# Archive files
+*.zip
+*.tar
+*.gz
+*.bz2
+*.xz
+
+# Configuration files that might contain sensitive data
+config.json
+secrets.json
+api_keys.json
+credentials.json
+
+# Test files
+test_*.js
+test_*.py
+*_test.js
+*_test.py
+
+# Generated documentation
+docs/
+documentation/
+
+# Cache directories
+.cache/
+cache/
+
+# Local development files
+local/
+dev/
+development/
+
+# Deployment files
+deploy/
+deployment/
+
+# Monitoring and analytics
+analytics/
+monitoring/
+metrics/
+
+# Backup and sync files
+*.sync
+*.backup
+*.orig 
