@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Map, { Source, Layer } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { layerStyles } from './mapLayerStyles';
 import { useMapDataLoader } from './mapDataLoader';
 import { useMapLayerManager } from './mapLayerManager';
-import { MapLegend, MapPopup } from './mapUIComponents';
+import { MapLegend, MapPopup, useSceneTransition } from './mapUIComponents';
+import BlockGroupDetailsCard from './BlockGroupDetailsCard';
+import MapMainPanel from './MapMainPanel';
+import ScenePopupManager from './ScenePopupManager';
 
 const MAPBOX_TOKEN = process.env.REACT_APP_MAPBOX_ACCESS_TOKEN;
 
@@ -47,11 +50,275 @@ const WindOnlyHypothesisMap = () => {
     mountedLayers,
     toggleLayerVisibility,
     shouldRenderLayer,
-    calculateRenderCapacity
+    calculateRenderCapacity,
+    setLayerVisibility,
+    setMapInstance: setLayerManagerMapInstance,
+    forceCleanupAllLayers,
+    getLayerStats
   } = useMapLayerManager(viewState);
 
   const [clickedFeature, setClickedFeature] = useState(null);
+  const [detailsCardBlock, setDetailsCardBlock] = useState(null);
+  const [detailsCardCoords, setDetailsCardCoords] = useState(null);
   const [popupInfo, setPopupInfo] = useState(null);
+  const [mapInstance, setMapInstance] = useState(null);
+  const [parksEnabled, setParksEnabled] = useState(false);
+  const [selectedBlockId, setSelectedBlockId] = useState(null);
+  const [activePopupCards, setActivePopupCards] = useState([]);
+
+  // Note: Scene navigation is now handled via DOM intervention in popup cards
+  // (no longer needed: hoveredBlockId, setHoveredBlockId)
+  
+  // Scene transition coordination between Navigator and Legend
+  const { transitionState, triggerSceneTransition } = useSceneTransition();
+
+  // Ensure each block feature has an id property (from GEOID)
+  const blocksGeoJson = useMemo(() => {
+    if (!blockGroupBoundariesData) return null;
+    // Only add id if not present
+    if (blockGroupBoundariesData.features.every(f => f.id)) return blockGroupBoundariesData;
+    return {
+      ...blockGroupBoundariesData,
+      features: blockGroupBoundariesData.features.map(f => ({
+        ...f,
+        id: f.id || f.properties.GEOID
+      }))
+    };
+  }, [blockGroupBoundariesData]);
+
+  // Block group click handler
+  const handleMapClick = useCallback((event) => {
+    if (!event || !event.features) return;
+    // Look for block group feature (block-group-boundaries) or blocks layer
+    let blockFeature = event.features.find(f => f.layer && f.layer.id === 'block-group-boundaries');
+    if (!blockFeature) {
+      blockFeature = event.features.find(f => f.layer && f.layer.id === 'blocks');
+    }
+    if (blockFeature) {
+      console.log('Block clicked:', blockFeature);
+      console.log('Block properties:', blockFeature.properties);
+      setDetailsCardBlock(blockFeature);
+      setSelectedBlockId(blockFeature.id || blockFeature.properties.GEOID);
+      // Use centroid from properties if available, else calculate from geometry
+      let lat = null, lon = null;
+      if (blockFeature.properties.INTPTLAT && blockFeature.properties.INTPTLON) {
+        lat = parseFloat(blockFeature.properties.INTPTLAT);
+        lon = parseFloat(blockFeature.properties.INTPTLON);
+      } else if (blockFeature.geometry && blockFeature.geometry.type === 'Polygon') {
+        // Simple centroid calculation for polygons
+        const coords = blockFeature.geometry.coordinates[0];
+        let x = 0, y = 0;
+        coords.forEach(([lng, latPt]) => {
+          x += lng;
+          y += latPt;
+        });
+        lon = x / coords.length;
+        lat = y / coords.length;
+      }
+      if (lat && lon) setDetailsCardCoords({ lat, lon });
+      else setDetailsCardCoords(null);
+    }
+    else {
+      setSelectedBlockId(null);
+    }
+  }, []);
+
+  // Parks & Open Spaces Layer Toggle Mechanism
+  const handleParksToggle = useCallback(async (checked) => {
+    if (!mapInstance) return;
+    
+    setParksEnabled(checked);
+    
+    if (checked) {
+      // 1. Find and toggle predefined park layers
+      const parkLayers = [
+        'park', 'park-label', 'national-park', 'golf-course', 'pitch', 'grass'
+      ];
+      
+      parkLayers.forEach(layerId => {
+        if (mapInstance.getLayer(layerId)) {
+          // Toggle visibility and style existing Mapbox layers
+          mapInstance.setLayoutProperty(layerId, 'visibility', 'visible');
+          mapInstance.setPaintProperty(layerId, 'fill-color', '#2a9d2a');
+          mapInstance.setPaintProperty(layerId, 'fill-opacity', 0.45);
+        }
+      });
+
+      // 2. Filter and style the 'landuse' layer for park features
+      if (mapInstance.getLayer('landuse')) {
+        // Store original filter for restoration
+        if (!mapInstance._originalLanduseFilter) {
+          mapInstance._originalLanduseFilter = mapInstance.getFilter('landuse') || ['all'];
+        }
+        
+        // Apply comprehensive filter for park-related landuse
+        mapInstance.setFilter('landuse', ['all', 
+          mapInstance._originalLanduseFilter,
+          ['any',
+            ['==', ['get', 'class'], 'park'],
+            ['==', ['get', 'class'], 'recreation_ground'],
+            ['==', ['get', 'class'], 'forest'],
+            ['==', ['get', 'class'], 'agriculture'],
+            ['==', ['get', 'class'], 'grass'],
+            ['==', ['get', 'class'], 'golf_course']
+          ]
+        ]);
+        
+        // Apply color-coded styling based on landuse type
+        mapInstance.setPaintProperty('landuse', 'fill-color', [
+          'case',
+          ['==', ['get', 'class'], 'park'], '#2a9d2a',        // bright green
+          ['==', ['get', 'class'], 'forest'], '#1e5e1e',      // forest green
+          ['==', ['get', 'class'], 'agriculture'], '#9acd32',  // yellow-green
+          ['==', ['get', 'class'], 'grass'], '#90EE90',        // light green
+          ['==', ['get', 'class'], 'golf_course'], '#228B22',  // forest green
+          '#2a9d2a' // default
+        ]);
+        
+        mapInstance.setPaintProperty('landuse', 'fill-opacity', 0.6);
+      }
+
+      // 3. Filter 'landuse_overlay' for special features
+      if (mapInstance.getLayer('landuse_overlay')) {
+        if (!mapInstance._originalLanduseOverlayFilter) {
+          mapInstance._originalLanduseOverlayFilter = mapInstance.getFilter('landuse_overlay') || ['all'];
+        }
+        
+        mapInstance.setFilter('landuse_overlay', ['any',
+          ['==', ['get', 'class'], 'national_park'],
+          ['==', ['get', 'class'], 'wetland'],
+          ['==', ['get', 'class'], 'forest']
+        ]);
+        
+        mapInstance.setPaintProperty('landuse_overlay', 'fill-color', '#1e5e1e');
+        mapInstance.setPaintProperty('landuse_overlay', 'fill-opacity', 0.4);
+      }
+
+      // 4. Filter 'poi_label' for park-related POIs
+      if (mapInstance.getLayer('poi_label')) {
+        if (!mapInstance._originalPoiLabelFilter) {
+          mapInstance._originalPoiLabelFilter = mapInstance.getFilter('poi_label') || ['all'];
+        }
+        
+        mapInstance.setFilter('poi_label', ['any',
+          ['==', ['get', 'maki'], 'park'],
+          ['==', ['get', 'maki'], 'playground'],
+          ['==', ['get', 'type'], 'Park'],
+          ['==', ['get', 'type'], 'Golf Course'],
+          ['==', ['get', 'type'], 'Recreation Area']
+        ]);
+      }
+
+    } else {
+      // Restore all layers to original state
+      const parkLayers = [
+        'park', 'park-label', 'national-park', 'golf-course', 'pitch', 'grass'
+      ];
+      
+      parkLayers.forEach(layerId => {
+        if (mapInstance.getLayer(layerId)) {
+          mapInstance.setLayoutProperty(layerId, 'visibility', 'none');
+        }
+      });
+      
+      // Restore original filters and styles
+      if (mapInstance._originalLanduseFilter) {
+        mapInstance.setFilter('landuse', mapInstance._originalLanduseFilter);
+        mapInstance.setPaintProperty('landuse', 'fill-color', undefined);
+        mapInstance.setPaintProperty('landuse', 'fill-opacity', undefined);
+      }
+      
+      if (mapInstance._originalLanduseOverlayFilter) {
+        mapInstance.setFilter('landuse_overlay', mapInstance._originalLanduseOverlayFilter);
+        mapInstance.setPaintProperty('landuse_overlay', 'fill-color', undefined);
+        mapInstance.setPaintProperty('landuse_overlay', 'fill-opacity', undefined);
+      }
+      
+      if (mapInstance._originalPoiLabelFilter) {
+        mapInstance.setFilter('poi_label', mapInstance._originalPoiLabelFilter);
+      }
+    }
+  }, [mapInstance]);
+
+  // Sync parks state with layer visibility
+  useEffect(() => {
+    if (parksEnabled !== layerVisibility.parks) {
+      setLayerVisibility(prev => ({
+        ...prev,
+        parks: parksEnabled
+      }));
+    }
+  }, [parksEnabled, layerVisibility.parks, setLayerVisibility]);
+
+  // Mapbox hover feature-state for blocks
+  useEffect(() => {
+    if (!mapInstance || !layerVisibility.blocks || !blocksGeoJson) return;
+    const map = mapInstance;
+    let hoveredId = null;
+
+    function onMouseMove(e) {
+      if (!e.features || !e.features.length) return;
+      const feature = e.features[0];
+      // Clear previous
+      if (hoveredId !== null) {
+        map.setFeatureState({ source: 'blocks-source', id: hoveredId }, { hover: false });
+      }
+      hoveredId = feature.id;
+      map.setFeatureState({ source: 'blocks-source', id: hoveredId }, { hover: true });
+    }
+
+    function onMouseLeave() {
+      if (hoveredId !== null) {
+        map.setFeatureState({ source: 'blocks-source', id: hoveredId }, { hover: false });
+      }
+      hoveredId = null;
+    }
+
+    function onClick(e) {
+      if (!e.features || !e.features.length) return;
+      const feature = e.features[0];
+      console.log('[Blocks-hover] Block clicked:', feature);
+      console.log('[Blocks-hover] Block properties:', feature.properties);
+      setSelectedBlockId(feature.id || feature.properties.GEOID);
+      // Compute bounds from feature geometry
+      const coordinates = feature.geometry.type === 'Polygon'
+        ? feature.geometry.coordinates[0]
+        : feature.geometry.type === 'MultiPolygon'
+          ? feature.geometry.coordinates[0][0]
+          : null;
+      if (coordinates) {
+        let minLng = coordinates[0][0], minLat = coordinates[0][1], maxLng = coordinates[0][0], maxLat = coordinates[0][1];
+        coordinates.forEach(([lng, lat]) => {
+          if (lng < minLng) minLng = lng;
+          if (lng > maxLng) maxLng = lng;
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+        });
+        map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 300, duration: 800 });
+      }
+      // Show census details card for block in center of screen after 1 second delay
+      setDetailsCardBlock(null);
+      setDetailsCardCoords(null);
+      setTimeout(() => {
+        setDetailsCardBlock(feature);
+        setDetailsCardCoords(null);
+      }, 1000);
+    }
+
+    map.on('mousemove', 'blocks-hover', onMouseMove);
+    map.on('mouseleave', 'blocks-hover', onMouseLeave);
+    map.on('click', 'blocks-hover', onClick);
+
+    return () => {
+      map.off('mousemove', 'blocks-hover', onMouseMove);
+      map.off('mouseleave', 'blocks-hover', onMouseLeave);
+      map.off('click', 'blocks-hover', onClick);
+      // Clean up any lingering hover state
+      if (hoveredId !== null) {
+        map.setFeatureState({ source: 'blocks-source', id: hoveredId }, { hover: false });
+      }
+    };
+  }, [mapInstance, layerVisibility.blocks, blocksGeoJson]);
 
   // Recalculate render capacity when layers or data change
   useEffect(() => {
@@ -74,6 +341,9 @@ const WindOnlyHypothesisMap = () => {
     };
     calculateRenderCapacity(dataStates);
   }, [calculateRenderCapacity, floodZonesData, coastalFloodZonesData, coastalExtensionFloodZonesData, floodMaxData, usaceData, zipCodeBoundariesData, hurricaneMiltonData, buildingsData, roadsData, pathsData, redfinPropertiesData, commercialPoisData, socialPoisData, environmentalPoisData, blockGroupBoundariesData]);
+
+  // Note: Removed cleanup effect to prevent infinite loop
+  // Layer cleanup is handled by the layer manager itself
 
   // Handle click on map
   const onClick = (event) => {
@@ -244,6 +514,26 @@ const WindOnlyHypothesisMap = () => {
     }
   };
 
+  // (no longer needed: onMouseMoveBlocks)
+
+  // Pulse animation for selected block border
+  useEffect(() => {
+    if (!mapInstance || !selectedBlockId) return;
+    let pulse = 0;
+    const map = mapInstance;
+    let animationFrame;
+    const animate = () => {
+      pulse = (pulse + 1) % 2;
+      map.setFeatureState({ source: 'blocks-source', id: selectedBlockId }, { pulse });
+      animationFrame = requestAnimationFrame(animate);
+    };
+    animate();
+    return () => {
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      map.setFeatureState({ source: 'blocks-source', id: selectedBlockId }, { pulse: 0 });
+    };
+  }, [mapInstance, selectedBlockId]);
+
   if (loading) {
     const getLoadingMessage = () => {
       switch (loadingPhase) {
@@ -375,6 +665,12 @@ const WindOnlyHypothesisMap = () => {
         style={{ width: '100%', height: '100%' }}
         projection="globe"
         onClick={onClick}
+        onLoad={e => {
+          const map = e.target;
+          setMapInstance(map);
+          setLayerManagerMapInstance(map);
+          console.log('🗺️ Map loaded, layer manager initialized');
+        }}
       >
         {/* Map Layers */}
         {shouldRenderLayer('floodZones', floodZonesData) && (
@@ -469,8 +765,55 @@ const WindOnlyHypothesisMap = () => {
           </Source>
         )}
 
+        {layerVisibility.blocks && blocksGeoJson && (
+          <Source id="blocks-source" type="geojson" data={blocksGeoJson}>
+            <Layer
+              {...{
+                ...layerStyles.blocks,
+                paint: {
+                  ...layerStyles.blocks.paint,
+                }
+              }}
+            />
+            <Layer
+              {...layerStyles.blocksHover}
+            />
+            {/* Selected block fill highlight as a separate fill layer */}
+            {selectedBlockId && (
+              <Layer
+                id="blocks-selected-fill"
+                type="fill"
+                source="blocks-source"
+                filter={["==", ["id"], selectedBlockId]}
+                paint={{
+                  "fill-color": "#ec4899",
+                  "fill-opacity": 0.15
+                }}
+              />
+            )}
+            {/* Selected block border highlight as a separate line layer */}
+            <Layer
+              id="blocks-selected-line"
+              type="line"
+              source="blocks-source"
+              filter={["==", ["id"], selectedBlockId]}
+              paint={{
+                "line-color": "#ec4899",
+                "line-width": [
+                  "interpolate",
+                  ["linear"],
+                  ["coalesce", ["feature-state", "pulse"], 0],
+                  0, 4,
+                  1, 8
+                ],
+                "line-opacity": 0.95
+              }}
+            />
+          </Source>
+        )}
+
         {shouldRenderLayer('blockGroupBoundaries', blockGroupBoundariesData) && (
-          <Source id="block-group-boundaries-source" type="geojson" data={blockGroupBoundariesData}>
+          <Source id="block-group-boundaries-source" type="geojson" data={blocksGeoJson}>
             <Layer {...layerStyles.blockGroupBoundaries} />
           </Source>
         )}
@@ -478,6 +821,11 @@ const WindOnlyHypothesisMap = () => {
       
       {/* UI Components */}
       <MapPopup popupInfo={popupInfo} setPopupInfo={setPopupInfo} />
+      <BlockGroupDetailsCard 
+        block={detailsCardBlock} 
+        onClose={() => setDetailsCardBlock(null)} 
+        coords={detailsCardCoords}
+      />
       
       <MapLegend 
         layerVisibility={layerVisibility}
@@ -488,8 +836,6 @@ const WindOnlyHypothesisMap = () => {
         viewState={viewState}
         floodZonesData={floodZonesData}
         coastalFloodZonesData={coastalFloodZonesData}
-
-
         coastalExtensionFloodZonesData={coastalExtensionFloodZonesData}
         floodMaxData={floodMaxData}
         usaceData={usaceData}
@@ -503,6 +849,27 @@ const WindOnlyHypothesisMap = () => {
         socialPoisData={socialPoisData}
         environmentalPoisData={environmentalPoisData}
         blockGroupBoundariesData={blockGroupBoundariesData}
+        blocksData={blockGroupBoundariesData}
+        handleParksToggle={handleParksToggle}
+        parksEnabled={parksEnabled}
+        sceneTransitionState={transitionState}
+      />
+      <MapMainPanel 
+        map={mapInstance} 
+        layerVisibility={layerVisibility}
+        setLayerVisibility={setLayerVisibility}
+        parksEnabled={parksEnabled}
+        handleParksToggle={handleParksToggle}
+        sharedSceneTransition={triggerSceneTransition}
+        activePopupCards={activePopupCards}
+        setActivePopupCards={setActivePopupCards}
+      />
+      <ScenePopupManager 
+        mapInstance={mapInstance}
+        activeCards={activePopupCards}
+        onCardClose={(cardId) => {
+          setActivePopupCards(prev => prev.filter(card => card.id !== cardId));
+        }}
       />
     </div>
   );

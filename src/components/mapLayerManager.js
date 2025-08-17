@@ -1,13 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // Custom hook for layer management
 export const useMapLayerManager = (viewState) => {
+  const DEBUG_MODE = false; // Set to true to enable detailed logging
   // Layer visibility states
   const [layerVisibility, setLayerVisibility] = useState({
     floodZones: false,
     coastalFloodZones: false,
-
-
     coastalExtensionFloodZones: false,
     floodMax: false,
     usace: false,
@@ -20,7 +19,9 @@ export const useMapLayerManager = (viewState) => {
     commercialPois: false,
     socialPois: false,
     environmentalPois: false,
-    blockGroupBoundaries: false
+    blockGroupBoundaries: false,
+    blocks: true, // Blocks layer enabled by default
+    parks: false // Parks layer toggle
   });
 
   // Render capacity monitoring
@@ -34,8 +35,6 @@ export const useMapLayerManager = (viewState) => {
   const [layerComplexity, setLayerComplexity] = useState({
     floodZones: 0,
     coastalFloodZones: 0,
-
-
     coastalExtensionFloodZones: 0,
     floodMax: 0,
     usace: 0,
@@ -48,38 +47,114 @@ export const useMapLayerManager = (viewState) => {
     commercialPois: 0,
     socialPois: 0,
     environmentalPois: 0,
-    blockGroupBoundaries: 0
+    blockGroupBoundaries: 0,
+    blocks: 0,
+    parks: 0
   });
 
-  // Memory management: Track mounted layers
+  // Memory management: Track mounted layers with more detailed state
   const [mountedLayers, setMountedLayers] = useState(new Set());
-  
-  // Function to track layer mounting/unmounting
-  const trackLayerMount = (layerName, isMounted) => {
+  const layerMountState = useRef(new Map()); // Track detailed mount state
+  const mapInstance = useRef(null);
+
+  // Set map instance for cleanup operations
+  const setMapInstance = (map) => {
+    mapInstance.current = map;
+  };
+
+  // Enhanced layer mounting/unmounting with proper cleanup
+  const trackLayerMount = useCallback((layerName, isMounted, data = null) => {
     setMountedLayers(prev => {
       const newSet = new Set(prev);
       if (isMounted) {
         newSet.add(layerName);
-        console.log(`🔵 Layer mounted: ${layerName} (${mountedLayers.size + 1} total mounted)`);
+        layerMountState.current.set(layerName, {
+          mounted: true,
+          timestamp: Date.now(),
+          dataSize: data ? JSON.stringify(data).length : 0
+        });
+        if (DEBUG_MODE) console.log(`🔵 Layer mounted: ${layerName} (${newSet.size} total)`);
       } else {
         newSet.delete(layerName);
-        console.log(`🔴 Layer unmounted: ${layerName} (${mountedLayers.size - 1} total mounted)`);
+        layerMountState.current.delete(layerName);
+        if (DEBUG_MODE) console.log(`🔴 Layer unmounted: ${layerName} (${newSet.size} total)`);
       }
       return newSet;
     });
+
+    // Force garbage collection for unmounted layers
+    if (!isMounted && mapInstance.current) {
+      try {
+        // Remove any event listeners for this layer
+        const layerIds = getLayerIds(layerName);
+        layerIds.forEach(layerId => {
+          if (mapInstance.current.getLayer(layerId)) {
+            // Remove layer-specific event listeners
+            mapInstance.current.off('mousemove', layerId);
+            mapInstance.current.off('mouseleave', layerId);
+            mapInstance.current.off('click', layerId);
+          }
+        });
+        
+        // Force cleanup of any cached data
+        if (window.gc) {
+          if (DEBUG_MODE) console.log(`🧹 Forcing GC after unmounting ${layerName}`);
+          window.gc();
+        }
+      } catch (error) {
+        console.warn(`Error during layer cleanup for ${layerName}:`, error);
+      }
+    }
+  }, []);
+
+  // Get layer IDs for a given layer name
+  const getLayerIds = (layerName) => {
+    const layerIdMap = {
+      floodZones: ['flood-zones'],
+      coastalFloodZones: ['coastal-flood-zones'],
+      coastalExtensionFloodZones: ['coastal-extension-flood-zones'],
+      floodMax: ['flood-max'],
+      usace: ['usace'],
+      zipCodeBoundaries: ['zip-code-boundaries'],
+      hurricaneMilton: ['hurricane-milton'],
+      buildings: ['buildings'],
+      roads: ['roads'],
+      paths: ['paths'],
+      redfinProperties: ['redfin-properties'],
+      commercialPois: ['commercial-pois'],
+      socialPois: ['social-pois'],
+      environmentalPois: ['environmental-pois'],
+      blockGroupBoundaries: ['block-group-boundaries'],
+      blocks: ['blocks', 'blocks-hover'],
+      parks: ['park', 'park-label', 'national-park', 'golf-course', 'pitch', 'grass', 'landuse', 'landuse-overlay', 'poi-label']
+    };
+    return layerIdMap[layerName] || [];
   };
 
-  // Toggle layer visibility with unmounting
-  const toggleLayerVisibility = (layerName) => {
-    setLayerVisibility(prev => ({
+  // Enhanced toggle with proper cleanup
+  const toggleLayerVisibility = useCallback((layerName) => {
+    setLayerVisibility(prev => {
+      const newVisibility = !prev[layerName];
+      
+      // If turning off, schedule cleanup
+      if (!newVisibility && mountedLayers.has(layerName)) {
+        // Delay cleanup to avoid race conditions
+        setTimeout(() => {
+          trackLayerMount(layerName, false);
+        }, 100);
+      }
+      
+      return {
       ...prev,
-      [layerName]: !prev[layerName]
-    }));
+        [layerName]: newVisibility
   };
+    });
+  }, [mountedLayers, trackLayerMount]);
 
-  // Function to check if a layer should be rendered (data loaded AND visible)
-  const shouldRenderLayer = (layerName, data) => {
+  // Enhanced shouldRenderLayer with better resource management
+  const shouldRenderLayer = useCallback((layerName, data) => {
     const shouldRender = data && layerVisibility[layerName];
+    const isCurrentlyMounted = mountedLayers.has(layerName);
     
     // Special handling for buildings layer
     if (layerName === 'buildings' && shouldRender) {
@@ -89,30 +164,50 @@ export const useMapLayerManager = (viewState) => {
       const isHighZoom = viewState.zoom >= 16;
       
       // Always render buildings, but with smart optimization
-      // At low zoom or when heavy layers are on, buildings will be very light
-      if (!mountedLayers.has(layerName)) {
-        trackLayerMount(layerName, true);
+      if (!isCurrentlyMounted) {
+        trackLayerMount(layerName, true, data);
       }
       return true;
     }
     
     // Track mounting/unmounting for other layers
-    if (shouldRender && !mountedLayers.has(layerName)) {
-      trackLayerMount(layerName, true);
-    } else if (!shouldRender && mountedLayers.has(layerName)) {
+    if (shouldRender && !isCurrentlyMounted) {
+      trackLayerMount(layerName, true, data);
+    } else if (!shouldRender && isCurrentlyMounted) {
       trackLayerMount(layerName, false);
     }
     
     return shouldRender;
-  };
+  }, [layerVisibility, mountedLayers, trackLayerMount, viewState.zoom]);
+
+  // Force cleanup all layers
+  const forceCleanupAllLayers = useCallback(() => {
+    if (mountedLayers.size > 0) {
+      console.log('🧹 Force cleaning up all layers');
+      mountedLayers.forEach(layerName => {
+        trackLayerMount(layerName, false);
+      });
+    }
+  }, [mountedLayers, trackLayerMount]);
+
+  // Get layer mount statistics
+  const getLayerStats = useCallback(() => {
+    const stats = {
+      totalMounted: mountedLayers.size,
+      mountedLayers: Array.from(mountedLayers),
+      mountDetails: Array.from(layerMountState.current.entries()).map(([name, details]) => ({
+        name,
+        ...details
+      }))
+    };
+    return stats;
+  }, [mountedLayers]);
 
   // Function to get layer data safely
   const getLayerData = (layerName) => {
     const dataMap = {
       floodZones: null, // Will be passed from parent
       coastalFloodZones: null,
-
-  
       coastalExtensionFloodZones: null,
       floodMax: null,
       usace: null,
@@ -125,7 +220,8 @@ export const useMapLayerManager = (viewState) => {
       commercialPois: null,
       socialPois: null,
       environmentalPois: null,
-      blockGroupBoundaries: null
+      blockGroupBoundaries: null,
+      blocks: null
     };
     return dataMap[layerName];
   };
@@ -149,10 +245,6 @@ export const useMapLayerManager = (viewState) => {
       totalLoad += load;
       complexity.coastalFloodZones = load;
     }
-
-
-
-
 
     if (layerVisibility.coastalExtensionFloodZones && dataStates.coastalExtensionFloodZonesData) {
       const featureCount = dataStates.coastalExtensionFloodZonesData.features?.length || 0;
@@ -255,12 +347,16 @@ export const useMapLayerManager = (viewState) => {
       complexity.blockGroupBoundaries = load;
     }
 
-    // Cap total load at 100
-    totalLoad = Math.min(totalLoad, 100);
+    if (layerVisibility.blocks && dataStates.blockGroupBoundariesData) {
+      const featureCount = dataStates.blockGroupBoundariesData.features?.length || 0;
+      const load = Math.min(featureCount * 0.01, 5); // Blocks are very light
+      totalLoad += load;
+      complexity.blocks = load;
+    }
 
-    // Determine warning levels
-    const isWarning = totalLoad > 70;
-    const isCritical = totalLoad > 90;
+    // Update render capacity state
+    const isWarning = totalLoad > 60;
+    const isCritical = totalLoad > 80;
 
     setRenderCapacity({
       currentLoad: Math.round(totalLoad),
@@ -270,20 +366,25 @@ export const useMapLayerManager = (viewState) => {
     });
 
     setLayerComplexity(complexity);
+    
+    // Only log if there's a significant change or warning
+    if (DEBUG_MODE && (isCritical || isWarning || totalLoad > 50)) {
+      console.log(`📊 Render capacity: ${totalLoad.toFixed(1)}% (${isCritical ? 'CRITICAL' : isWarning ? 'WARNING' : 'OK'})`);
+    }
   }, [layerVisibility, viewState.zoom]);
 
   return {
-    // States
     layerVisibility,
+    setLayerVisibility,
     renderCapacity,
     layerComplexity,
     mountedLayers,
-    
-    // Functions
     toggleLayerVisibility,
     shouldRenderLayer,
-    getLayerData,
     calculateRenderCapacity,
-    trackLayerMount
+    setMapInstance,
+    forceCleanupAllLayers,
+    getLayerStats,
+    getLayerData
   };
 }; 

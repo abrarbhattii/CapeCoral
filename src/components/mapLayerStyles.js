@@ -338,5 +338,29 @@ export const layerStyles = {
       'circle-stroke-color': '#ffffff',
       'circle-stroke-width': 1
     }
+  },
+  // Blocks layer style (simple outline)
+  blocks: {
+    id: 'blocks',
+    type: 'line',
+    paint: {
+      'line-color': '#fbbf24',
+      'line-width': 1.5,
+      'line-opacity': 0 // Hide the outline
+    }
+  },
+  // Blocks hover fill style (for dynamic hover effect)
+  blocksHover: {
+    id: 'blocks-hover',
+    type: 'fill',
+    paint: {
+      'fill-color': [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        '#ec4899', // pink fill when hovered
+        'rgba(0,0,0,0)'
+      ],
+      'fill-opacity': 0.5
+    }
   }
 }; 
