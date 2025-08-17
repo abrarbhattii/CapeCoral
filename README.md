@@ -8,8 +8,10 @@ A React-based interactive mapping application for visualizing wind-only insuranc
 - **Flood Zone Visualization**: Multiple flood zone datasets with different resolutions
 - **Census Data Integration**: Block group boundaries with population vulnerability data
 - **Environmental POIs**: Points of interest including environmental, social, and commercial locations
+- **Scene Management**: Capture and recreate map scenes with specific configurations
 - **Layer Controls**: Toggle visibility of different data layers
 - **Responsive Design**: Works on desktop and mobile devices
+- **Data Catalog**: Comprehensive documentation of all geospatial datasets
 
 ## Data Sources
 
@@ -48,10 +50,22 @@ wind-only-foreclosure-map/
 │   │   ├── WindOnlyForeclosureMap.jsx
 │   │   ├── WindOnlyHypothesisMap.jsx
 │   │   ├── WindOnlyMapboxMap.jsx
+│   │   ├── MapMainPanel.jsx
+│   │   ├── BlockGroupDetailsCard.jsx
+│   │   ├── ScenePopupCard.jsx
+│   │   ├── ScenePopupManager.jsx
+│   │   ├── mapLayerManager.js
+│   │   ├── mapDataLoader.js
+│   │   ├── mapUIComponents.jsx
+│   │   ├── scenesMgm.js
 │   │   └── WindOnlyForeclosureMap.css
 │   ├── App.js               # Main application component
 │   └── index.js             # Application entry point
-├── scripts/                  # Data processing scripts (gitignored)
+├── capture_scenes.js          # Scene capture utility
+├── capture_scenes_browser.js  # Browser-based scene capture
+├── recreate_scenes.js         # Scene recreation utility
+├── GEOJSON_DATA_CATALOG.md   # Comprehensive data documentation
+├── SCENE_BACKUP_README.md    # Scene backup documentation
 ├── package.json             # Node.js dependencies
 └── README.md               # This file
 ```
@@ -104,10 +118,29 @@ The following large data files are excluded from version control (see `.gitignor
 - **Property data**: Real estate and insurance datasets
 - **Generated maps**: PNG and GeoJSON files created during processing
 
+### 📋 GeoJSON Data Catalog
+
+For a comprehensive overview of all GeoJSON files in this project, see **[GEOJSON_DATA_CATALOG.md](./GEOJSON_DATA_CATALOG.md)**. This catalog includes:
+
+- **35+ GeoJSON files** (~3.5GB total)
+- Detailed descriptions and file sizes
+- Data sources and APIs used
+- Step-by-step recreation methods
+- Recommended storage strategies
+
+### Getting the Data Files
+
 To obtain the data files:
-1. Contact the project maintainers for access to the data repository
-2. Follow the data processing scripts to regenerate files from source data
-3. Use the provided data download scripts (requires appropriate API access)
+1. **Regenerate from sources**: Use the methods documented in `GEOJSON_DATA_CATALOG.md`
+2. **Contact project maintainers** for access to the data repository
+3. **Use provided scripts**: Run data download scripts (requires appropriate API access)
+
+Key data sources include:
+- **FEMA National Flood Hazard Layer** (flood zones)
+- **OpenStreetMap** (roads, buildings, POIs)
+- **US Census Bureau** (demographics, boundaries)
+- **Microsoft Building Footprints** (building data)
+- **Florida Office of Insurance Regulation** (insurance data)
 
 ## Configuration
 
